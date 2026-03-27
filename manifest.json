@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "GQ Taiwan - More Updates",
+  "version": "1.0.0",
+  "description": "在 GQ Taiwan 首頁顯示更多最新文章",
+  "permissions": ["activeTab"],
+  "host_permissions": [
+    "https://www.gq.com.tw/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.gq.com.tw/"],
+      "js": ["content.js"],
+      "css": ["style.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  }
+}
