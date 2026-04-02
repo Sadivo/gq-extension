@@ -9,7 +9,7 @@
 1. 下載或 clone 這個 repo
 2. 開啟 Chrome，前往 `chrome://extensions/`
 3. 右上角開啟「**開發人員模式**」
-4. 點「**載入未封裝項目**」，選擇 `gq-extension` 資料夾
+4. 點「**載入未封裝項目**」，選擇 `GQ-MORE-UPDATES` 資料夾
 5. 前往 `https://www.gq.com.tw/` 即可看到效果
 
 ## 功能
@@ -22,7 +22,7 @@
 ## 檔案結構
 
 ```
-gq-extension/
+GQ-MORE-UPDATES/
 ├── manifest.json   # 擴充程式設定
 ├── content.js      # 注入首頁的主要邏輯
 ├── style.css       # 樣式
