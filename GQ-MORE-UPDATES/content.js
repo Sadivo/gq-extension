@@ -1,6 +1,10 @@
 /**
  * GQ Taiwan - More Updates
- * 從 sitemap 抓最新文章，注入到首頁 MOST UPDATED 區塊下方
+ * 從月份 sitemap 抓最新文章，注入到首頁 MOST UPDATED 區塊下方
+ *
+ * GQ Taiwan sitemap 結構：
+ *   sitemap.xml          → sitemapindex（月份索引）
+ *   sitemap-YYYY-MM.xml  → 當月所有文章的 urlset
  */
 
 const MAX_PER_LOAD = 8;
@@ -10,40 +14,58 @@ let allArticles = [];
 let displayedCount = 0;
 let isLoading = false;
 
+const LOG = (...args) => console.log("[GQ+]", ...args);
+const ERR = (...args) => console.error("[GQ+]", ...args);
+
 // ── sitemap 工具 ──────────────────────────────────────────
 
-function getCurrentWeeks() {
-  // 回傳最近 3 週的 {year, month, week}，week = Math.ceil(day/7)
+/** 回傳最近 2 個月的 {year, month}，最新的在前 */
+function getRecentMonths() {
   const results = [];
   const d = new Date();
-  for (let i = 0; i < 3; i++) {
-    const t = new Date(d);
-    t.setDate(d.getDate() - i * 7);
-    results.push({
-      year: t.getFullYear(),
-      month: t.getMonth() + 1,
-      week: Math.ceil(t.getDate() / 7),
-    });
+  for (let i = 0; i < 2; i++) {
+    const t = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    results.push({ year: t.getFullYear(), month: t.getMonth() + 1 });
   }
   return results;
 }
 
-async function fetchSitemap(year, month, week) {
-  const url = `https://www.gq.com.tw/sitemap.xml?year=${year}&month=${month}&week=${week}`;
-  const resp = await fetch(url);
+/** 抓單一月份的 sitemap，回傳符合條件的文章陣列 */
+async function fetchMonthlySitemap(year, month) {
+  const mm = String(month).padStart(2, "0");
+  const url = `https://www.gq.com.tw/sitemap-${year}-${mm}.xml`;
+  LOG(`fetchSitemap → ${url}`);
+
+  let resp;
+  try {
+    resp = await fetch(url);
+  } catch (e) {
+    ERR(`  fetch 失敗: ${e.message}`);
+    return [];
+  }
+
+  LOG(`  HTTP ${resp.status}`);
   if (!resp.ok) return [];
 
   const text = await resp.text();
-  const xml = new DOMParser().parseFromString(text, "application/xml");
-  const articles = [];
+  LOG(`  回傳長度: ${text.length} 字元，前 150 字:`, text.slice(0, 150));
 
-  for (const urlEl of xml.querySelectorAll("url")) {
-    const loc     = urlEl.querySelector("loc")?.textContent || "";
-    const lastmod = urlEl.querySelector("lastmod")?.textContent || "";
+  const xml = new DOMParser().parseFromString(text, "application/xml");
+  if (xml.querySelector("parsererror")) {
+    ERR("  XML 解析失敗");
+    return [];
+  }
+
+  const articles = [];
+  for (const urlEl of xml.getElementsByTagName("url")) {
+    const loc     = urlEl.getElementsByTagName("loc")[0]?.textContent?.trim() || "";
+    const lastmod = urlEl.getElementsByTagName("lastmod")[0]?.textContent?.trim() || "";
     if (loc.includes("/article/") || loc.includes("/special/")) {
       articles.push({ url: loc, lastmod, title: "", category: "", image: "" });
     }
   }
+
+  LOG(`  解析到 ${articles.length} 篇文章`);
   return articles;
 }
 
@@ -61,27 +83,25 @@ async function fetchArticleMeta(article) {
 
     const ogImage = doc.querySelector('meta[property="og:image"]');
     if (ogImage) article.image = ogImage.getAttribute("content") || "";
-  } catch (_) {}
+  } catch (e) {
+    LOG(`fetchArticleMeta 失敗 (${article.url}): ${e.message}`);
+  }
   return article;
 }
 
 // ── DOM 工具 ──────────────────────────────────────────────
 
-/**
- * 找到包含 MOST UPDATED 標題 + 4 篇文章的完整 FeaturesRow 容器。
- * 結構：h3 > SectionTitleRoot > GridContent > GridWrapper > FeaturesRow
- * 插在 FeaturesRow 後面，就會出現在 4 篇文章正下方。
- */
 function findMostUpdatedContainer() {
   for (const el of document.querySelectorAll("h2, h3")) {
     if (!el.textContent.trim().toUpperCase().includes("MOST UPDATED")) continue;
 
+    LOG(`找到 MOST UPDATED 標題`);
     let node = el.parentElement;
     for (let i = 0; i < 10; i++) {
       if (!node) break;
       const cls = node.className || "";
-      // FeaturesRow 是包含標題 + 所有文章卡片的最小完整容器
       if (cls.includes("FeaturesRow") || cls.includes("featuresrow")) {
+        LOG(`找到 FeaturesRow 容器 (往上 ${i + 1} 層)`);
         return node;
       }
       node = node.parentElement;
@@ -92,6 +112,8 @@ function findMostUpdatedContainer() {
     for (let i = 0; i < 3; i++) fallback = fallback?.parentElement;
     return fallback || el.parentElement;
   }
+
+  ERR("找不到含 'MOST UPDATED' 的 h2/h3");
   return null;
 }
 
@@ -141,13 +163,12 @@ function showNextBatch(grid, btn, statusEl) {
 // ── 主流程 ────────────────────────────────────────────────
 
 async function init() {
-  const container = findMostUpdatedContainer();
-  if (!container) {
-    console.warn("[GQ+] 找不到 MOST UPDATED 容器");
-    return;
-  }
+  LOG("init() 開始");
 
-  // 建立 UI，插在 MOST UPDATED 正後面
+  const container = findMostUpdatedContainer();
+  if (!container) return;
+
+  // 建立 UI
   const section = document.createElement("div");
   section.id = "gq-more-section";
   section.innerHTML = `
@@ -158,17 +179,19 @@ async function init() {
   `;
   container.insertAdjacentElement("afterend", section);
 
-  const grid    = section.querySelector("#gq-grid");
-  const btn     = section.querySelector("#gq-load-btn");
+  const grid     = section.querySelector("#gq-grid");
+  const btn      = section.querySelector("#gq-load-btn");
   const statusEl = section.querySelector("#gq-status");
 
-  // 抓 sitemap（本週 + 前兩週，確保有足夠文章）
+  // 抓最近 2 個月的 sitemap
   let rawArticles = [];
   const seen = new Set();
+  const months = getRecentMonths();
+  LOG("抓取月份:", months);
 
-  for (const { year, month, week } of getCurrentWeeks()) {
+  for (const { year, month } of months) {
     try {
-      const batch = await fetchSitemap(year, month, week);
+      const batch = await fetchMonthlySitemap(year, month);
       for (const a of batch) {
         const key = a.url.split("#")[0];
         if (!seen.has(key)) {
@@ -176,11 +199,15 @@ async function init() {
           rawArticles.push(a);
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      ERR(`fetchMonthlySitemap 例外: ${e.message}`);
+    }
     if (rawArticles.length >= MAX_TOTAL) break;
   }
 
-  // 按時間排序（最新在前），取前 MAX_TOTAL 篇
+  LOG(`共抓到 ${rawArticles.length} 篇（去重）`);
+
+  // 按 lastmod 排序（最新在前），取前 MAX_TOTAL 篇
   allArticles = rawArticles
     .sort((a, b) => b.lastmod.localeCompare(a.lastmod))
     .slice(0, MAX_TOTAL);
@@ -188,6 +215,7 @@ async function init() {
   if (allArticles.length === 0) {
     statusEl.textContent = "沒有找到更多文章";
     btn.style.display = "none";
+    ERR("allArticles 為空，請查閱上方 [GQ+] 日誌");
     return;
   }
 
@@ -197,6 +225,7 @@ async function init() {
 
   statusEl.textContent = "";
   showNextBatch(grid, btn, statusEl);
+  LOG(`初始渲染完成，共 ${displayedCount} 篇`);
 
   btn.addEventListener("click", async () => {
     if (isLoading) return;
@@ -204,12 +233,18 @@ async function init() {
     btn.disabled = true;
     btn.textContent = "載入中...";
 
-    await Promise.all(
-      allArticles.slice(displayedCount, displayedCount + MAX_PER_LOAD).map(a => fetchArticleMeta(a))
-    );
-
-    showNextBatch(grid, btn, statusEl);
-    isLoading = false;
+    try {
+      await Promise.all(
+        allArticles.slice(displayedCount, displayedCount + MAX_PER_LOAD).map(a => fetchArticleMeta(a))
+      );
+      showNextBatch(grid, btn, statusEl);
+    } catch (e) {
+      ERR(`載入更多失敗: ${e.message}`);
+      btn.disabled = false;
+      btn.textContent = "重試";
+    } finally {
+      isLoading = false;
+    }
   });
 }
 
